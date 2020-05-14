@@ -75,7 +75,7 @@ func checkUsersConsoleLoginAge(session *session.Session, user *iam.User) {
 		log.Info(fmt.Sprintf("%s Password never used", prefix))
 		if *activeMode {
 			log.Warn(fmt.Sprintf("%s Disabling console access", prefix))
-			// deleteUserLoginProfile(session, *user.UserName)
+			deleteUserLoginProfile(session, *user.UserName)
 		}
 	} else if olderThanAge(*user.PasswordLastUsed) {
 		log.Info(fmt.Sprintf(
@@ -109,7 +109,7 @@ func checkUsersAccessKeysAge(session *session.Session, user *iam.User) {
 			log.Info(fmt.Sprintf("%s Access key never used", prefix))
 			if *activeMode {
 				log.Warn(fmt.Sprintf("%s Removing access key", prefix))
-				// deleteAccessKeys(session, *key.AccessKeyId)
+				deleteAccessKeys(session, *key.AccessKeyId)
 			}
 		} else if olderThanAge(*lastUsed) {
 			log.Info(fmt.Sprintf(
@@ -117,7 +117,7 @@ func checkUsersAccessKeysAge(session *session.Session, user *iam.User) {
 			))
 			if *activeMode {
 				log.Warn(fmt.Sprintf("%s Removing access key", prefix))
-				// deleteAccessKeys(session, *key.AccessKeyId)
+				deleteAccessKeys(session, *key.AccessKeyId)
 			}
 		}
 	}
