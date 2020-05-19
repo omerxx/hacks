@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/route53"
@@ -16,7 +15,8 @@ import (
 )
 
 /*
- * Add
+ * TODO
+ * Add option for dead entries (-m / true on detect)
  */
 var verbose *bool
 var prefix string
@@ -29,6 +29,7 @@ func main() {
 
 	var profiles = strings.Split(*profilesFlag, ",")
 	for _, profile := range profiles {
+		logrus.Debugf("--- Profile: %s ---", profile)
 		checkSubdomainTakeovers(profile)
 	}
 }
@@ -52,14 +53,12 @@ func checkSubdomainTakeovers(profile string) {
 	if *verbose {
 		log.Logger.SetLevel(logrus.DebugLevel)
 	}
-	var wg sync.WaitGroup
 	for _, zone := range hostedZones {
 		if !(*zone.Config.PrivateZone) {
-			wg.Add(1)
-			go checkHostedZone(session, *zone.Id, log, &wg)
+			log.Infof(*zone.Name)
+			checkHostedZone(session, *zone.Id, log)
 		}
 	}
-	wg.Wait()
 }
 
 func listHostedZones(session *session.Session) ([]*route53.HostedZone, error) {
@@ -72,7 +71,7 @@ func listHostedZones(session *session.Session) ([]*route53.HostedZone, error) {
 	return hostedZones.HostedZones, nil
 }
 
-func checkHostedZone(session *session.Session, zoneID string, log *logrus.Entry, wg *sync.WaitGroup) {
+func checkHostedZone(session *session.Session, zoneID string, log *logrus.Entry) {
 	recordSets, _ := listRecordSets(session, zoneID)
 	recordSetLog := logrus.New().WithField("app", "1")
 	recordSetLog.Logger.SetLevel(logrus.DebugLevel)
@@ -83,25 +82,22 @@ func checkHostedZone(session *session.Session, zoneID string, log *logrus.Entry,
 
 	var wg2 sync.WaitGroup
 	for _, subdomain := range recordSets {
-		// if *subdomain.Name == "." {
-		// 	log.Infof("Calling %s", *subdomain.Name)
 		wg2.Add(1)
 		go checkRecordSet(*subdomain.Name, recordSetLog, fingerprints, &wg2)
-		// }
 	}
 	wg2.Wait()
-	wg.Done()
 }
 
 func checkRecordSet(subdomain string, log *logrus.Entry, fingerprints []subjack.Fingerprints, wg2 *sync.WaitGroup) {
 	trimmed := strings.TrimSuffix(subdomain, ".")
-	service := subjack.Identify(trimmed, false, false, 10, fingerprints)
+	var service string
+	service = subjack.Identify(trimmed, false, false, 25, fingerprints)
 	if service != "" {
 		service = strings.ToLower(service)
-		log.Infof("%s is pointing to a vulnerable %s service.\n", trimmed, service)
+		log.Warnf("%s is pointing to a vulnerable %s service.\n", trimmed, service)
 	} else {
 		if *verbose {
-			log.Debugf(fmt.Sprintf("%s is ok\n", subdomain))
+			log.Debugf("%s is ok\n", subdomain)
 		}
 	}
 	wg2.Done()
