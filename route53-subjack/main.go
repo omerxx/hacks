@@ -73,27 +73,27 @@ func listHostedZones(session *session.Session) ([]*route53.HostedZone, error) {
 }
 
 func checkHostedZone(session *session.Session, zoneID string, log *logrus.Entry, wg *sync.WaitGroup) {
-	// defer wg.Done()
 	recordSets, _ := listRecordSets(session, zoneID)
 	recordSetLog := logrus.New().WithField("app", "1")
 	recordSetLog.Logger.SetLevel(logrus.DebugLevel)
+
+	var fingerprints []subjack.Fingerprints
+	config, _ := ioutil.ReadFile("./fingerprints.json")
+	json.Unmarshal(config, &fingerprints)
+
 	var wg2 sync.WaitGroup
 	for _, subdomain := range recordSets {
-		// if *subdomain.Name == "readme.spot.im." {
+		// if *subdomain.Name == "." {
 		// 	log.Infof("Calling %s", *subdomain.Name)
 		wg2.Add(1)
-		go checkRecordSet(*subdomain.Name, recordSetLog, &wg2)
+		go checkRecordSet(*subdomain.Name, recordSetLog, fingerprints, &wg2)
 		// }
 	}
 	wg2.Wait()
 	wg.Done()
 }
 
-func checkRecordSet(subdomain string, log *logrus.Entry, wg2 *sync.WaitGroup) {
-	// defer wg2.Done()
-	var fingerprints []subjack.Fingerprints
-	config, _ := ioutil.ReadFile("./fingerprints.json")
-	json.Unmarshal(config, &fingerprints)
+func checkRecordSet(subdomain string, log *logrus.Entry, fingerprints []subjack.Fingerprints, wg2 *sync.WaitGroup) {
 	trimmed := strings.TrimSuffix(subdomain, ".")
 	service := subjack.Identify(trimmed, false, false, 10, fingerprints)
 	if service != "" {
