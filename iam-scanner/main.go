@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
 	log "github.com/sirupsen/logrus"
@@ -71,17 +72,42 @@ func checkUsersCredentialsAge(session *session.Session, users []*iam.User, profi
 }
 
 func checkUsersConsoleLoginAge(session *session.Session, user *iam.User) {
-	if user.PasswordLastUsed == nil {
-		log.Info(fmt.Sprintf("%s Password never used", prefix))
-		if *activeMode {
-			log.Warn(fmt.Sprintf("%s Disabling console access", prefix))
-			deleteUserLoginProfile(session, *user.UserName)
+	if hasLoginProfile(session, user) == true {
+		if user.PasswordLastUsed == nil {
+			log.Info(fmt.Sprintf("%s Password never used, but user has a login profile", prefix))
+			if *activeMode {
+				log.Warn(fmt.Sprintf("%s Disabling console access", prefix))
+				deleteUserLoginProfile(session, *user.UserName)
+			}
+		} else if olderThanAge(*user.PasswordLastUsed) {
+			log.Info(fmt.Sprintf(
+				"%s Password last used %d days ago", prefix, int(now.Sub(*user.PasswordLastUsed).Hours()/24),
+			))
 		}
-	} else if olderThanAge(*user.PasswordLastUsed) {
-		log.Info(fmt.Sprintf(
-			"%s Key last used %d days ago", prefix, int(now.Sub(*user.PasswordLastUsed).Hours()/24),
-		))
 	}
+}
+
+func hasLoginProfile(session *session.Session, user *iam.User) bool {
+	svc := iam.New(session)
+	input := &iam.GetLoginProfileInput{
+		UserName: aws.String(*user.UserName),
+	}
+
+	_, err := svc.GetLoginProfile(input)
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case iam.ErrCodeNoSuchEntityException:
+				log.Debugf("No login profile for %s", *user.UserName)
+				return false
+			default:
+				log.Error(iam.ErrCodeServiceFailureException, aerr.Error())
+			}
+		} else {
+			log.Error(iam.ErrCodeServiceFailureException, aerr.Error())
+		}
+	}
+	return true
 }
 
 func deleteUserLoginProfile(session *session.Session, username string) {
