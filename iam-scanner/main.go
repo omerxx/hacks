@@ -35,6 +35,11 @@ func main() {
 	activeMode = flag.Bool("active", false, "Active mode - deactivates users and keys according to rules")
 	flag.Parse()
 
+	logFormat := new(log.TextFormatter)
+	logFormat.TimestampFormat = "2006-01-02 15:04:05"
+	log.SetFormatter(logFormat)
+	logFormat.FullTimestamp = true
+
 	var profiles = strings.Split(*profilesFlag, ",")
 	allowedCredentialsAge = *ageFlag
 	for _, profile := range profiles {
