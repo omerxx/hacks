@@ -26,23 +26,27 @@ import (
  */
 var allowedCredentialsAge float64
 var activeMode *bool
+var focusMode *bool
 var prefix string
 var now = time.Now()
+var log = logrus.New()
 
 func main() {
 	var profilesFlag = flag.String("profiles", "default", "An AWS CLI profile name, or comma-separated list for multiple")
 	var ageFlag = flag.Float64("age", 365, "Age in DAYS beyond keys and activity will be addressed")
 	activeMode = flag.Bool("active", false, "Active mode - deactivates users and keys according to rules")
+	focusMode = flag.Bool("focus", false, "Focus mode - only shows actionable items")
 	flag.Parse()
 
-	logFormat := new(log.TextFormatter)
+	logFormat := new(logrus.TextFormatter)
 	logFormat.TimestampFormat = "2006-01-02 15:04:05"
-	log.SetFormatter(logFormat)
+	logrus.SetFormatter(logFormat)
 	logFormat.FullTimestamp = true
 
 	var profiles = strings.Split(*profilesFlag, ",")
 	allowedCredentialsAge = *ageFlag
 	for _, profile := range profiles {
+		log.Infof("\n-----------------\nScanning account %s\n-----------------", profile)
 		checkAccountCredentials(profile)
 	}
 }
@@ -53,7 +57,7 @@ func checkAccountCredentials(profile string) {
 	})
 	users, err := listUsers(session)
 	if err != nil {
-		log.Error(err)
+		logrus.Error(err)
 	}
 	checkUsersCredentialsAge(session, users, profile)
 }
@@ -71,22 +75,51 @@ func listUsers(session *session.Session) ([]*iam.User, error) {
 func checkUsersCredentialsAge(session *session.Session, users []*iam.User, profile string) {
 	for _, user := range users {
 		prefix = fmt.Sprintf("%s | %s: ", profile, *user.UserName)
+		listUserRoles(session, user)
 		checkUsersConsoleLoginAge(session, user)
 		checkUsersAccessKeysAge(session, user)
+		logrus.Infof("\n")
+	}
+}
+
+func listUserRoles(session *session.Session, user *iam.User) {
+	// list attached user policies
+	svc := iam.New(session)
+	input := &iam.ListAttachedUserPoliciesInput{
+		UserName: aws.String(*user.UserName),
+	}
+	policies, err := svc.ListAttachedUserPolicies(input)
+	if err != nil {
+		logrus.Error(err)
+	}
+	logrus.Infof("---------%s---------", *user.UserName)
+	for _, policy := range policies.AttachedPolicies {
+		if strings.Contains(*policy.PolicyName, "FullAccess") || strings.Contains(*policy.PolicyName, "Admin") || strings.Contains(*policy.PolicyName, "admin") {
+			log.WithFields(logrus.Fields{"Issue": "Full Access permissions"}).Errorf("\t%s", *policy.PolicyName)
+		} else if *focusMode == false {
+			log.Infof("\t%s", *policy.PolicyName)
+		}
 	}
 }
 
 func checkUsersConsoleLoginAge(session *session.Session, user *iam.User) {
 	if hasLoginProfile(session, user) == true {
 		if user.PasswordLastUsed == nil {
-			log.Info(fmt.Sprintf("%s Password never used, but user has a login profile", prefix))
+			// log.Warn(fmt.Sprintf("%s Password never used, but user has a login profile", prefix))
+			log.WithFields(
+				logrus.Fields{"Issue": "password never used, but user has a login profile"},
+			).Warn()
 			if *activeMode {
 				log.Warn(fmt.Sprintf("%s Disabling console access", prefix))
 				deleteUserLoginProfile(session, *user.UserName)
 			}
 		} else if olderThanAge(*user.PasswordLastUsed) {
-			log.Info(fmt.Sprintf(
-				"%s Password last used %d days ago", prefix, int(now.Sub(*user.PasswordLastUsed).Hours()/24),
+			log.WithFields(
+				logrus.Fields{
+					"Optional": "Remove console profile",
+				}).Info(fmt.Sprintf(
+				// "%s Password last used %d days ago", prefix, int(now.Sub(*user.PasswordLastUsed).Hours()/24),
+				"\tPassword last used %d days ago", int(now.Sub(*user.PasswordLastUsed).Hours()/24),
 			))
 		}
 	}
@@ -137,14 +170,17 @@ func checkUsersAccessKeysAge(session *session.Session, user *iam.User) {
 			fmt.Println(err)
 		}
 		if lastUsed == nil {
-			log.Info(fmt.Sprintf("%s Access key never used", prefix))
+			log.Warnf("\tAccess key never used [%s]", *key.AccessKeyId)
 			if *activeMode {
-				log.Warn(fmt.Sprintf("%s Removing access key", prefix))
+				log.Warn("Removing access key")
 				deleteAccessKeys(session, *key.AccessKeyId)
 			}
 		} else if olderThanAge(*lastUsed) {
-			log.Info(fmt.Sprintf(
-				"%s Key %s last used %d days ago", prefix, *key.AccessKeyId, int(now.Sub(*lastUsed).Hours()/24),
+			log.WithFields(
+				logrus.Fields{
+					"Optional": "Rotate key",
+				}).Info(fmt.Sprintf(
+				"\tKey %s last used %d days ago", *key.AccessKeyId, int(now.Sub(*lastUsed).Hours()/24),
 			))
 			if *activeMode {
 				log.Warn(fmt.Sprintf("%s Removing access key", prefix))
